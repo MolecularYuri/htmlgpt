@@ -129,18 +129,41 @@ def add_cms(docs):
         npi = pick(row, "NPI")
         if npi in docs and "hospital" in pick(row, "facility_type").lower():
             ccn = pick(row, "Facility Affiliations Certification Number")
-            hosps.setdefault(npi, set()).add(hosp_names.get(ccn) or ccn)
+            hosps.setdefault(npi, set()).add(hosp_names.get(ccn) or f"CCN {ccn}")
     for npi, names in hosps.items():
         docs[npi]["hospitals"] = "; ".join(sorted(names))
+
+
+NON_PHYSICIAN = re.compile(r"\b(NP|PA|PA-?C|CRNP|APRN|FNP|FNP-?C|CPNP|RN|ARNP|DNP|ANP|AGNP|CNS)\b")
+NON_PHYSICIAN_SPEC = ("NURSE PRACTITIONER", "PHYSICIAN ASSISTANT", "CLINICAL NURSE SPECIALIST")
+
+
+def is_physician(d):
+    cred = d["credentials"].upper().replace(".", "")
+    if re.search(r"\b(MD|DO|MBBS|MBBCH|MB)\b", cred):
+        return True
+    return not NON_PHYSICIAN.search(cred) and d.get("cms_primary_specialty", "") not in NON_PHYSICIAN_SPEC
+
+
+def mark_activity(d):
+    """active: есть в Medicare (CMS) или запись NPPES обновлялась за последние 5 лет."""
+    year = int(d["nppes_last_update"][-4:] or 0)
+    d["in_medicare"] = "yes" if d.get("cms_primary_specialty") else "no"
+    d["likely_active"] = "yes" if d["in_medicare"] == "yes" or year >= 2021 else "unclear"
 
 
 def main():
     docs = load_nppes()
     print(f"онкологов в NPPES: {len(docs):,}")
     add_cms(docs)
+    before = len(docs)
+    docs = {k: d for k, d in docs.items() if is_physician(d)}
+    print(f"убрано не-врачей (NP/PA и т.п.): {before - len(docs):,}")
+    for d in docs.values():
+        mark_activity(d)
     cols = ["npi", "first_name", "middle_name", "last_name", "credentials", "gender", "specialty",
             "all_onc_specialties", "cms_primary_specialty", "clinic", "hospitals", "address", "city",
-            "state", "zip", "phone", "medical_school", "grad_year", "nppes_last_update"]
+            "state", "zip", "phone", "medical_school", "grad_year", "in_medicare", "likely_active", "nppes_last_update"]
     out = OUT / "stage1_oncologists.csv"
     with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, cols, extrasaction="ignore")
@@ -154,6 +177,8 @@ def main():
         print(f"  {s}: {n:,}")
     print(f"  с клиникой (CMS): {sum(1 for d in docs.values() if d.get('clinic')):,}")
     print(f"  с больницей (CMS): {sum(1 for d in docs.values() if d.get('hospitals')):,}")
+    print(f"  в Medicare: {sum(1 for d in docs.values() if d['in_medicare'] == 'yes'):,}")
+    print(f"  скорее активны: {sum(1 for d in docs.values() if d['likely_active'] == 'yes'):,}")
 
 
 if __name__ == "__main__":
