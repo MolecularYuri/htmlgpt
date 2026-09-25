@@ -37,7 +37,7 @@ def download(url, dest):
 
 def nppes_zip():
     html = urllib.request.urlopen(NPPES_INDEX).read().decode("utf-8", "ignore")
-    links = re.findall(r'href="([^"]*NPPES_Data_Dissemination_[A-Za-z]+_\d{4}(?:_V2)?\.zip)"', html)
+    links = re.findall(r'href=["\']([^"\']*NPPES_Data_Dissemination_[A-Za-z]+_\d{4}(?:_V2)?\.zip)["\']', html)
     if not links:
         sys.exit("не нашёл ссылку на полную выгрузку NPPES на " + NPPES_INDEX)
     url = links[0] if links[0].startswith("http") else "https://download.cms.gov/nppes/" + links[0].lstrip("./")
