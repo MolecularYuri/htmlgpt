@@ -3,3 +3,5 @@ out/
 stage1.log
 *.log
 __pycache__/
+results/oncologists_usa.*
+results/domain_patterns.csv
