@@ -267,7 +267,7 @@ def summarize(p):
             if e not in email_info or r["year"] > email_info[e][1]:
                 email_info[e] = (how, r["year"], r["pmid"] or r["pmcid"])
     return {
-        "first_name": best_name["first"], "last_name": best_name["last"],
+        "first_name": re.sub(r"^(dr|prof)\.?\s+", "", best_name["first"] or "", flags=re.I), "last_name": best_name["last"],
         "specialty": Counter(r["dept"] for r in p).most_common(1)[0][0],
         "institution": latest["org"] or next((r["org"] for r in p if r["org"]), ""),
         "city": latest["city"] or next((r["city"] for r in p if r["city"]), ""),
@@ -279,6 +279,43 @@ def summarize(p):
         "sample_pmids": "; ".join(sorted({r["pmid"] for r in p if r["pmid"]})[:5]),
         "_emails": emails, "_email_info": email_info, "_records": p,
     }
+
+
+def dedupe(rows):
+    """Строки с одним и тем же именным адресом — это один врач (переезд, разное написание имени)."""
+    parent = list(range(len(rows)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    by_email = defaultdict(list)
+    for i, r in enumerate(rows):
+        if r["email"] and r["email_type"] in ("published_personal", "trial_contact"):
+            by_email[r["email"]].append(i)
+    for idx in by_email.values():
+        same = [i for i in idx if fold(rows[i]["last_name"]) == fold(rows[idx[0]]["last_name"])]
+        for i in same[1:]:
+            parent[find(i)] = find(same[0])
+    groups = defaultdict(list)
+    for i in range(len(rows)):
+        groups[find(i)].append(rows[i])
+    out = []
+    for g in groups.values():
+        if len(g) == 1:
+            out.append(g[0])
+            continue
+        g.sort(key=lambda r: (-int(r["last_pub_year"] or 0), -int(r["n_pubs"] or 0)))
+        base = dict(g[0])
+        base["first_name"] = max((r["first_name"] for r in g), key=len)
+        base["n_pubs"] = max(int(r["n_pubs"] or 0) for r in g)
+        base["ismpo_no"] = next((r["ismpo_no"] for r in g if r.get("ismpo_no")), "")
+        others = [e for r in g for e in [r["email"]] + r["other_emails"].split("; ") if e and e != base["email"]]
+        base["other_emails"] = "; ".join(dict.fromkeys(others))
+        base["sample_pmids"] = "; ".join(dict.fromkeys(x for r in g for x in r["sample_pmids"].split("; ") if x))
+        out.append(base)
+    return out
 
 
 def match_name(name):
@@ -371,6 +408,39 @@ def main():
             ct_added += 1
     print(f"ClinicalTrials.gov: имейлов добавлено к известным врачам {ct_added}")
 
+    # адресный поиск по каждому врачу (этап 5)
+    ps = DATA / "person_search.jsonl"
+    found = {j["pid"]: j for j in map(json.loads, open(ps))} if ps.exists() else {}
+    ps_added = 0
+    for p in people:
+        j = found.get(f"{fold(p['last_name'])}|{fold(p['first_name'])}|{fold(p['city'])}|{p.get('ismpo_no', '')}")
+        if not j:
+            continue
+        for e, how, year, src in j["emails"]:
+            p["_emails"][e] += 1
+            if e not in p["_email_info"] or year > p["_email_info"][e][1]:
+                p["_email_info"][e] = (how, year, src)
+        ps_added += bool(j["emails"])
+        if j["latest_year"] and j["latest_year"] > int(p["last_pub_year"] or 0):
+            p["last_pub_year"], p["latest_affiliation"] = j["latest_year"], j["latest_aff"]
+    print(f"адресный поиск: имейлы найдены ещё у {ps_added:,} врачей")
+
+    def named_in(e, p):
+        local = fold(e.split("@")[0])
+        last, first = fold(p["last_name"]), fold(p["first_name"].split(" ")[0]) if p["first_name"] else ""
+        return (len(last) >= 3 and last in local) or (len(first) >= 3 and first in local)
+
+    # адрес, в котором есть имя другого врача из базы, у «чужого» человека не используем
+    owner = defaultdict(set)
+    for i, p in enumerate(people):
+        for e in p["_emails"]:
+            if named_in(e, p):
+                owner[e].add(i)
+    for i, p in enumerate(people):
+        for e in list(p["_emails"]):
+            if owner.get(e) and i not in owner[e]:
+                del p["_emails"][e]
+
     rows = []
     for p in people:
         emails = p["_emails"]
@@ -400,6 +470,7 @@ def main():
             "email_year": info[best][1] if best else "",
             "other_emails": "; ".join(ranked[1:4]),
         })
+    rows = dedupe(rows)
     rows.sort(key=lambda r: (r["email_type"] != "published_personal", -int(r["last_pub_year"] or 0), r["last_name"]))
     cols = ["first_name", "last_name", "specialty", "institution", "city", "state", "email", "email_type", "email_source",
             "email_year", "other_emails", "last_pub_year", "n_pubs", "ismpo_no", "possible_non_physician", "specialty_unclear",
