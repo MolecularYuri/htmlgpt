@@ -318,6 +318,23 @@ def dedupe(rows):
     return out
 
 
+FILLER = re.compile(r"dr|doc|doctor|onco|oncology|onc|hemato|haemato|md|dm|mail|med|india|official|prof|the")
+
+
+def email_names_person(e, first, last):
+    """Адрес «именной» для этого человека: есть фамилия или имя, и нет чужого имени рядом с фамилией."""
+    local = fold(e.split("@")[0])
+    last, first = fold(last), fold((first or "").split(" ")[0])
+    has_last, has_first = len(last) >= 3 and last in local, len(first) >= 3 and first in local
+    if has_first:
+        return True
+    if not has_last:
+        return False
+    rest = FILLER.sub("", local.replace(last, "", 1))
+    # «sachdevaprerna» у Pallavi Sachdeva: рядом с фамилией чужое имя → не её адрес
+    return len(rest) < 4 or (first and (first.startswith(rest) or rest.startswith(first[:len(rest)])))
+
+
 def match_name(name):
     n = re.sub(r"\b(dr|prof|col|brig|maj|major|lt|gen|md|dm|mbbs)\b\.?|[().]", " ", name, flags=re.I)
     parts = [x for x in re.split(r"[\s,]+", n) if x]
@@ -426,9 +443,7 @@ def main():
     print(f"адресный поиск: имейлы найдены ещё у {ps_added:,} врачей")
 
     def named_in(e, p):
-        local = fold(e.split("@")[0])
-        last, first = fold(p["last_name"]), fold(p["first_name"].split(" ")[0]) if p["first_name"] else ""
-        return (len(last) >= 3 and last in local) or (len(first) >= 3 and first in local)
+        return email_names_person(e, p["first_name"], p["last_name"])
 
     # адрес, в котором есть имя другого врача из базы, у «чужого» человека не используем
     owner = defaultdict(set)
@@ -449,16 +464,14 @@ def main():
         first = fold(p["first_name"].split(" ")[0]) if p["first_name"] else ""
 
         def score(e):
-            local = fold(e.split("@")[0])
-            named = (len(last) >= 3 and last in local) or (len(first) >= 3 and first in local)
+            named = email_names_person(e, p["first_name"], p["last_name"])
             how = info[e][0]
             return (named, how.startswith("fulltext_author_tag") or how.startswith("fulltext_corresp") or how == "pubmed_affiliation",
                     info[e][1], emails[e])
         ranked = sorted(emails, key=score, reverse=True)
         best = ranked[0] if ranked else ""
         if best:
-            local = fold(best.split("@")[0])
-            named = (len(last) >= 3 and last in local) or (len(first) >= 3 and first in local)
+            named = email_names_person(best, p["first_name"], p["last_name"])
             etype = "published_personal" if named else "published_unverified_owner"
             if info[best][0] == "clinicaltrials_contact":
                 etype = "trial_contact" if named else "trial_contact_generic"

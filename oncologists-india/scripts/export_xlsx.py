@@ -40,6 +40,9 @@ for a, b in [
     ("published_unverified_owner", f"Адрес из статьи этого врача, но имени в адресе нет — может принадлежать соавтору. ({t['published_unverified_owner']})"),
     ("trial_contact", f"Контакт врача в клиническом исследовании (ClinicalTrials.gov). ({t['trial_contact']})"),
     ("trial_contact_generic", f"Общий ящик центра из ClinicalTrials.gov. ({t['trial_contact_generic']})"),
+    ("pattern_email", f"Отдельная колонка (не в email): вероятный рабочий адрес по надёжной схеме домена учреждения, ~85% верных на проверке. "
+                      f"Только для врачей без опубликованного адреса. Юридически серая зона (DPDP Act), использовать по решению клиента. "
+                      f"({sum(1 for r in rows if r.get('pattern_email'))})"),
     ("", ""),
     ("ВАЖНО", "Перед рассылкой прогнать адреса через сервис проверки (MillionVerifier / ZeroBounce / NeverBounce)."),
     ("", "Адреса из старых статей (email_year) могли устареть; 74% адресов — личная почта (gmail и т.п.), она меняется редко."),
@@ -58,7 +61,7 @@ for a, b in [
     info.append([a, b])
 info.column_dimensions["A"].width = 55
 info.column_dimensions["B"].width = 110
-for row in (1, 8, 17):
+for row in (1, 8, 18):
     info.cell(row, 1).font = Font(bold=True)
 
 out = ROOT / "results" / "oncologists_india.xlsx"

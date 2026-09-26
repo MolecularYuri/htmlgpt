@@ -97,15 +97,16 @@ def main():
         return (f"{local}@{dom}", share, pat) if local and share >= 0.5 else None
 
     # проверка точности на тех, у кого известен институциональный адрес
-    ok = tot = 0
+    ok, tot = Counter(), Counter()
     for r in rows:
         if r["email_type"] == "published_personal" and r["email"].split("@")[1] not in FREE:
             g = guess(r)
             if g:
-                tot += 1
-                ok += g[0] == r["email"]
-    acc = ok / tot if tot else 0
-    print(f"схем доменов: {len(pats)}; проверка на {tot} врачах с известным адресом: точность {acc:.0%}")
+                tier = "high" if g[1] >= 0.9 else "medium" if g[1] >= 0.7 else "low"
+                tot[tier] += 1
+                ok[tier] += g[0] == r["email"]
+    print(f"схем доменов: {len(pats)}; проверка на врачах с известным адресом: " +
+          ", ".join(f"{t}: {ok[t]}/{tot[t]}" for t in ("high", "medium", "low")))
 
     added = 0
     for r in rows:
@@ -113,16 +114,16 @@ def main():
         if r["email_type"] in ("published_personal", "trial_contact"):
             continue
         g = guess(r)
-        if g:
+        # средние и слабые схемы на проверке угадали 15–40% — хуже, чем ничего; оставляем только ≥90%
+        if g and g[1] >= 0.9:
             r["pattern_email"] = g[0]
-            r["pattern_confidence"] = "high" if g[1] >= 0.9 else "medium" if g[1] >= 0.7 else "low"
+            r["pattern_confidence"] = "high (~85% на проверке)"
             added += 1
     with open(OUT / "india_oncologists.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
-    print(f"вероятный адрес по схеме домена: {added:,} врачей "
-          f"{dict(Counter(r['pattern_confidence'] for r in rows if r['pattern_confidence']))}")
+    print(f"вероятный адрес по надёжной схеме домена: {added:,} врачей")
 
 
 if __name__ == "__main__":
